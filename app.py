@@ -28,25 +28,16 @@ def prepare_image(img):
     return img
 
 def model_predict(img_path, model):
-    # Load the image
     img = image.load_img(img_path, target_size=(150, 150))
-    
-    # Convert the image to array
     img_array = image.img_to_array(img)
     
-    # Expand dimensions to match the shape of model input
     img_array = np.expand_dims(img_array, axis=0)
-    
-    # Preprocess the image (scaling, etc.)
     img_array = img_array / 255.0
     
-    # Print the shape to verify
     print("Image shape:", img_array.shape)
     
-    # Make prediction
     prediction = model.predict(img_array)
     
-    # Convert the prediction to a readable format
     predicted_class = (prediction[0][0] > 0.5).astype("int32")
     label = 'Uninfected' if predicted_class == 1 else 'Infected'
     
