@@ -1,12 +1,56 @@
-from flask import Flask, render_template, request, flash, redirect
+from flask import Flask, render_template, request, flash, redirect,url_for
+import tensorflow as tf
 import pickle
 import numpy as np
 from PIL import Image
 from tensorflow.keras.models import load_model
-
+from tensorflow.keras.preprocessing import image
+import os
 
 
 app = Flask(__name__)
+
+malaria_model = load_model('models/malaria2.h5')
+try:
+    model = tf.keras.models.load_model('models/pneumonia1.h5')
+    print("Model loaded successfully!")
+except Exception as e:
+    print(f"Error loading model: {e}")
+    model = None
+
+def prepare_image(img):
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    img = img.resize((200, 200))
+    img = image.img_to_array(img)
+    img = np.expand_dims(img, axis=0)
+    img = img / 255.0
+    return img
+
+def model_predict(img_path, model):
+    # Load the image
+    img = image.load_img(img_path, target_size=(150, 150))
+    
+    # Convert the image to array
+    img_array = image.img_to_array(img)
+    
+    # Expand dimensions to match the shape of model input
+    img_array = np.expand_dims(img_array, axis=0)
+    
+    # Preprocess the image (scaling, etc.)
+    img_array = img_array / 255.0
+    
+    # Print the shape to verify
+    print("Image shape:", img_array.shape)
+    
+    # Make prediction
+    prediction = model.predict(img_array)
+    
+    # Convert the prediction to a readable format
+    predicted_class = (prediction[0][0] > 0.5).astype("int32")
+    label = 'Uninfected' if predicted_class == 1 else 'Infected'
+    
+    return label, prediction[0][0]
 
 def predict(values, dic):
     if len(values) == 8:
@@ -15,14 +59,6 @@ def predict(values, dic):
         return model.predict(values.reshape(1, -1))[0]
     elif len(values) == 26:
         model = pickle.load(open('models/breast_cancer.pkl','rb'))
-        values = np.asarray(values)
-        return model.predict(values.reshape(1, -1))[0]
-    elif len(values) == 13:
-        model = pickle.load(open('models/heart.pkl','rb'))
-        values = np.asarray(values)
-        return model.predict(values.reshape(1, -1))[0]
-    elif len(values) == 18:
-        model = pickle.load(open('models/kidney.pkl','rb'))
         values = np.asarray(values)
         return model.predict(values.reshape(1, -1))[0]
     elif len(values) == 10:
@@ -68,46 +104,63 @@ def predictPage():
         if request.method == 'POST':
             to_predict_dict = request.form.to_dict()
             to_predict_list = list(map(float, list(to_predict_dict.values())))
+            print("Form Data Received:", to_predict_dict)
+            print("List of Values:", to_predict_list)
             pred = predict(to_predict_list, to_predict_dict)
-    except:
+            print("Prediction Result:", pred)
+    except Exception as e:
+        print("Error:", e)
         message = "Please enter valid Data"
         return render_template("home.html", message = message)
 
     return render_template('predict.html', pred = pred)
 
-@app.route("/malariapredict", methods = ['POST', 'GET'])
+@app.route("/malariapredict", methods=['POST'])
 def malariapredictPage():
-    if request.method == 'POST':
-        try:
-            if 'image' in request.files:
-                img = Image.open(request.files['image'])
-                img = img.resize((36,36))
-                img = np.asarray(img)
-                img = img.reshape((1,36,36,3))
-                img = img.astype(np.float64)
-                model = load_model("models/malaria.h5")
-                pred = np.argmax(model.predict(img)[0])
-        except:
-            message = "Please upload an Image"
-            return render_template('malaria.html', message = message)
-    return render_template('malaria_predict.html', pred = pred)
+    if 'image' not in request.files:
+        message = "Please upload an image"
+        return render_template('malaria.html', message=message)
+
+    file = request.files['image']
+
+    if file.filename == '':
+        message = "No selected file"
+        return render_template('malaria.html', message=message)
+
+    if file:
+        upload_folder = 'uploads'
+        if not os.path.exists(upload_folder):
+            os.makedirs(upload_folder)
+
+        file_path = os.path.join(upload_folder, file.filename)
+        file.save(file_path)
+
+        label, probability = model_predict(file_path, malaria_model)
+
+        pred = 1 if label == 'Infected' else 0
+
+        return render_template('malaria_predict.html', pred=pred)
 
 @app.route("/pneumoniapredict", methods = ['POST', 'GET'])
 def pneumoniapredictPage():
-    if request.method == 'POST':
-        try:
-            if 'image' in request.files:
-                img = Image.open(request.files['image']).convert('L')
-                img = img.resize((36,36))
-                img = np.asarray(img)
-                img = img.reshape((1,36,36,1))
-                img = img / 255.0
-                model = load_model("models/pneumonia.h5")
-                pred = np.argmax(model.predict(img)[0])
-        except:
-            message = "Please upload an Image"
-            return render_template('pneumonia.html', message = message)
-    return render_template('pneumonia_predict.html', pred = pred)
+    if model is None:
+        return render_template('pneumonia.html', message="Model not loaded. Please contact the administrator.")
+
+    if 'image' not in request.files:
+        return render_template('pneumonia.html', message="No file part")
+    
+    file = request.files['image']
+    
+    if file.filename == '':
+        return render_template('pneumonia.html', message="No selected file")
+    
+    if file:
+        img = Image.open(file.stream)
+        prepared_image = prepare_image(img)
+        prediction = model.predict(prepared_image)
+        print(f"Raw prediction: {prediction}")
+        pred = 1 if prediction[0][0] > 0.5 else 0
+        return render_template('pneumonia_predict.html', pred=pred, prediction=prediction[0][0])
 
 if __name__ == '__main__':
 	app.run(debug = True)
